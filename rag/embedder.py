@@ -30,8 +30,14 @@ EMBEDDING_DIM = 384
 class Embedder:
     """Thin wrapper around fastembed's TextEmbedding, loaded once and reused."""
 
-    def __init__(self, model_name: str = MODEL_NAME) -> None:
-        self._model = TextEmbedding(model_name=model_name)
+    def __init__(self, model_name: str = MODEL_NAME, cache_dir: str | None = None) -> None:
+        # cache_dir lets the HTTP service (app.py) point fastembed's one-time model
+        # download at a persistent, volume-mounted path in the container instead of
+        # fastembed's own default (a /tmp location, which is wiped on container
+        # restart). Left as None (fastembed's own default) for every existing caller
+        # (scripts/ingest.py, scripts/query.py, tests/test_memory.py) -- no behavior
+        # change for them.
+        self._model = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
 
     def embed(self, texts: Iterable[str]) -> list[np.ndarray]:
         """Return one L2-normalized float32 vector per input text, same order as input."""

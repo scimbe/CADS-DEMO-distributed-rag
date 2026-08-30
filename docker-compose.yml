@@ -1,0 +1,33 @@
+# Runs the distributed-RAG /query service (app.py) as a single Docker Compose service --
+# the shape the marketplace#33 issue asks for as the next (packaging) phase's starting
+# point. No `name:`/`container_name:` pinned, same reasoning as
+# manifests/litellm-proof/docker-compose.yml in CADS-agent-marketplace: the eventual
+# marketplace installer supplies the compose project name at install time
+# (`docker compose -p <project>`), so nothing here should assume a fixed name.
+#
+# Bring up:   docker compose up --build
+# Ingest a book into the running container's corpus, e.g.:
+#   docker compose exec rag python scripts/ingest.py gutenberg 1661
+# Query:      curl -s localhost:8080/query -H 'content-type: application/json' \
+#               -d '{"question": "..."}'
+
+volumes:
+  distributed-rag-data:
+
+services:
+  rag:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - distributed-rag-data:/app/data
+    environment:
+      # Primary path: the team's local litellm-proxy. Leave unset and the service falls
+      # straight through to Groq (if GROQ_API_KEY is set) -- never a hard dependency,
+      # see rag/provider_pool.py and .env.example.
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - LITELLM_DEFAULT_MODEL=${LITELLM_DEFAULT_MODEL:-}
+      # Optional free external fallback (no credit card) -- see .env.example.
+      - GROQ_API_KEY=${GROQ_API_KEY:-}

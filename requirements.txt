@@ -1,3 +1,6 @@
 fastembed>=0.8.0,<0.9
 requests>=2.34,<3
 numpy>=2.5,<3
+lancedb>=0.37.0,<0.38
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1

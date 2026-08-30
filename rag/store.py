@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -65,7 +66,17 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 class Store:
     def __init__(self, path: str) -> None:
-        self._conn = sqlite3.connect(path)
+        # check_same_thread=False + an explicit lock: app.py's FastAPI service holds
+        # one Store singleton for the whole process, but FastAPI runs sync endpoint
+        # functions in a threadpool -- a different worker thread per request, not
+        # necessarily the thread that constructed this connection. sqlite3 forbids
+        # cross-thread use of one connection by default; the lock then serializes
+        # actual access, since a single sqlite3.Connection still isn't safe for truly
+        # concurrent use across threads even with that flag. CLI callers
+        # (scripts/ingest.py, scripts/query.py) are single-threaded, so this is a
+        # no-op for them.
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
         self._conn.execute(
             """CREATE TABLE IF NOT EXISTS chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,18 +92,20 @@ class Store:
         self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def insert_chunk(self, c: Chunk, now: int | None = None) -> int:
         if c.embedding.size == 0:
             raise ValueError("embedding must not be empty")
         now = now if now is not None else int(time.time())
-        cur = self._conn.execute(
-            "INSERT INTO chunks (source, title, passage_index, text, embedding, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (c.source, c.title, c.passage_index, c.text, _embedding_to_blob(c.embedding), now),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO chunks (source, title, passage_index, text, embedding, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (c.source, c.title, c.passage_index, c.text, _embedding_to_blob(c.embedding), now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def insert_many(self, chunks: list[Chunk]) -> int:
         now = int(time.time())
@@ -101,14 +114,16 @@ class Store:
         return len(chunks)
 
     def count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
     def search(self, query_embedding: np.ndarray, top_k: int = 5) -> list[SearchResult]:
         """Brute-force cosine search over every stored chunk. Rows whose embedding
         dimensionality doesn't match the query are skipped rather than erroring, same
         discipline as harness-memory's db.rs -- lets the embedding model change over
         time without corrupting old rows or crashing a mixed-dimension search."""
-        rows = self._conn.execute("SELECT id, source, title, passage_index, text, embedding, created_at FROM chunks").fetchall()
+        with self._lock:
+            rows = self._conn.execute("SELECT id, source, title, passage_index, text, embedding, created_at FROM chunks").fetchall()
         scored: list[SearchResult] = []
         for row_id, source, title, passage_index, text, blob, created_at in rows:
             emb = _blob_to_embedding(blob)

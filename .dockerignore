@@ -5,3 +5,5 @@ data/
 .fastembed_cache/
 *.sqlite3
 .env
+.git/
+tests/
