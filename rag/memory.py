@@ -123,13 +123,20 @@ class MemoryStore:
         tbl = self._open_or_none()
         return tbl.count_rows() if tbl is not None else 0
 
-    def recall(self, query: str, top_k: int = 5) -> list[RecalledInteraction]:
-        """Embed `query` and return the top-K most similar past interactions, ranked
-        by cosine similarity (highest first)."""
+    def recall(
+        self, query: str, top_k: int = 5, query_vec: np.ndarray | None = None
+    ) -> list[RecalledInteraction]:
+        """Return the top-K most similar past interactions, ranked by cosine
+        similarity (highest first).
+
+        `query_vec` lets a caller that already embedded `query` for its own purposes
+        (e.g. the document-corpus search) pass that vector straight through instead of
+        paying for a second, redundant embedding call on the same text."""
         tbl = self._open_or_none()
         if tbl is None:
             return []
-        query_vec = np.asarray(self._embedder.embed_one(query), dtype=np.float32)
+        if query_vec is None:
+            query_vec = np.asarray(self._embedder.embed_one(query), dtype=np.float32)
         rows = tbl.search(query_vec).metric("cosine").limit(top_k).to_list()
         return [
             RecalledInteraction(

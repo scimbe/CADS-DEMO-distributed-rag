@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -127,6 +128,11 @@ _embedder: Embedder | None = None
 _store: Store | None = None
 _memory: MemoryStore | None = None
 
+# Runs memory.recall() concurrently with the LLM call in /query -- recall's result is
+# deliberately excluded from the LLM prompt already (see the comment at its call site),
+# so it has no real dependency on the chat() call and shouldn't block in front of it.
+_memory_pool = ThreadPoolExecutor(max_workers=2)
+
 
 def _init_state() -> None:
     global _embedder, _store, _memory
@@ -185,13 +191,21 @@ def query(req: QueryRequest) -> QueryResponse:
     memory_top_k = DEFAULT_MEMORY_TOP_K if req.memory_top_k is None else req.memory_top_k
 
     query_vec = _embedder.embed_one(question)
-    results = _store.search(query_vec, top_k=top_k)
 
     # Check the interaction-memory layer (recall) before answering -- surfaced in the
     # response for observability, kept OUT of the LLM prompt itself so a prior answer
     # can never masquerade as a "fact present in the retrieved passages" (the grounding
-    # requirement is specifically about the document corpus, not about memory).
-    recalled = _memory.recall(question, top_k=memory_top_k) if memory_top_k > 0 else []
+    # requirement is specifically about the document corpus, not about memory). Recall
+    # has no dependency on the document search or the LLM call below, so it runs
+    # concurrently with both instead of blocking in front of them; reuses `query_vec`
+    # instead of re-embedding the same question a second time.
+    recall_future = (
+        _memory_pool.submit(_memory.recall, question, top_k=memory_top_k, query_vec=query_vec)
+        if memory_top_k > 0
+        else None
+    )
+
+    results = _store.search(query_vec, top_k=top_k)
 
     if not results:
         answer = (
@@ -211,6 +225,7 @@ def query(req: QueryRequest) -> QueryResponse:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         answer, backend, model = result.content, result.backend, result.model
 
+    recalled = recall_future.result() if recall_future is not None else []
     remembered_id = _memory.remember(Interaction(query=question, answer=answer, created_at=int(time.time())))
 
     return QueryResponse(
