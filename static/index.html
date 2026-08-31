@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Distributed RAG — grounded answers over a real library corpus</title>
+<style>
+  :root {
+    --bg:#0c111d; --panel:#141b2c; --panel2:#1a2338; --line:#2a3450; --line-soft:#212a41;
+    --text:#eef1f7; --muted:#8a93ad; --muted2:#c3c9db;
+    --accent:#d98a4f; --accent-soft:#a8683a; --accent2:#5fb8ab;
+    --ok:#5fb8ab; --bad:#e0716b;
+    --font-body: system-ui,-apple-system,"Segoe UI",sans-serif;
+    --font-head: ui-serif,Georgia,"Iowan Old Style","Palatino Linotype",serif;
+    --font-mono: ui-monospace,SFMono-Regular,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:#f5f7fb; --panel:#ffffff; --panel2:#eef1f8; --line:#d7deec; --line-soft:#e3e8f3;
+      --text:#131a2c; --muted:#5b6478; --muted2:#333d54;
+      --accent:#b8672f; --accent-soft:#8f4f24; --accent2:#2f8a7d;
+    }
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; }
+  body {
+    background:var(--bg); color:var(--text); font-family:var(--font-body);
+    line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  a { color:var(--accent2); }
+  h1,h2,h3 { font-family:var(--font-head); font-weight:600; letter-spacing:-0.01em; margin:0 0 .4em; }
+  h1 { font-size:2rem; }
+  h2 { font-size:1.3rem; margin-top:0; }
+  h3 { font-size:1rem; color:var(--muted2); }
+  .eyebrow {
+    font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.08em;
+    font-size:.72rem; color:var(--accent2);
+  }
+  .wrap { max-width:920px; margin:0 auto; padding:2.5rem 1.25rem 4rem; }
+  header.hero { padding-bottom:1.5rem; border-bottom:1px solid var(--line); margin-bottom:2rem; }
+  .badge {
+    display:inline-block; font-family:var(--font-mono); font-size:.72rem;
+    color:var(--muted); border:1px solid var(--line); border-radius:999px;
+    padding:.25em .8em; margin-bottom:1rem;
+  }
+  .badge a { color:var(--muted); text-decoration:none; }
+  .badge a:hover { color:var(--accent2); }
+  p.lede { color:var(--muted2); font-size:1.02rem; max-width:64ch; }
+  section.card {
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:1.5rem 1.5rem 1.75rem; margin-bottom:1.5rem;
+  }
+  section.card > .eyebrow { display:block; margin-bottom:.3rem; }
+  .row { display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; margin:.75rem 0; }
+  form.ask-row { display:flex; gap:.6rem; flex-wrap:wrap; align-items:flex-start; margin:.9rem 0; }
+  form.ask-row input[type=text] { flex:1 1 20rem; }
+  button.btn {
+    font-family:var(--font-body); font-size:.92rem; font-weight:600; cursor:pointer;
+    background:var(--accent); color:#1a1206; border:none; border-radius:6px;
+    padding:.6em 1.2em; transition:filter .15s ease; white-space:nowrap;
+  }
+  button.btn:hover { filter:brightness(1.08); }
+  button.btn:disabled { opacity:.5; cursor:not-allowed; filter:none; }
+  button.btn.secondary {
+    background:transparent; color:var(--text); border:1px solid var(--line);
+    font-weight:500; font-size:.82rem; padding:.4em .8em;
+  }
+  button.btn.secondary:hover { border-color:var(--accent2); color:var(--accent2); }
+  label { display:block; font-size:.82rem; color:var(--muted); margin:.9rem 0 .3rem; }
+  input[type=text] {
+    width:100%; background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:.65em .8em; font-family:var(--font-body); font-size:.95rem;
+  }
+  input[type=text]:focus, button.btn:focus-visible { outline:2px solid var(--accent2); outline-offset:1px; }
+  .small { font-size:.78rem; color:var(--muted); }
+  .status { font-family:var(--font-mono); font-size:.85rem; padding:.5em .9em; border-radius:6px; margin:.6rem 0; }
+  .status.pending { color:var(--muted); background:var(--panel2); border:1px solid var(--line); }
+  .status.ok { color:var(--ok); background:color-mix(in srgb, var(--ok) 12%, var(--panel2)); border:1px solid var(--ok); }
+  .status.bad { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, var(--panel2)); border:1px solid var(--bad); }
+
+  .answer-box {
+    background:var(--panel2); border:1px solid var(--line-soft); border-radius:10px;
+    padding:1.1em 1.2em; margin:1rem 0; white-space:pre-wrap;
+  }
+  .answer-box .meta { margin-top:.9em; padding-top:.7em; border-top:1px solid var(--line); font-size:.78rem; color:var(--muted); }
+  a.cite {
+    display:inline-block; font-family:var(--font-mono); font-size:.75em; font-weight:700;
+    color:var(--accent); text-decoration:none; padding:0 .1em;
+  }
+  a.cite:hover { text-decoration:underline; }
+
+  .src-list { list-style:none; margin:1rem 0 0; padding:0; display:flex; flex-direction:column; gap:.6rem; }
+  .src-card {
+    background:var(--panel2); border:1px solid var(--line-soft); border-radius:8px; padding:.75em .9em;
+  }
+  .src-card .src-head { display:flex; align-items:baseline; gap:.5em; flex-wrap:wrap; }
+  .src-card .src-num {
+    font-family:var(--font-mono); font-weight:700; color:var(--accent);
+    border:1px solid var(--accent-soft); border-radius:5px; padding:0 .4em; font-size:.78rem;
+  }
+  .src-card .src-title { font-weight:600; }
+  .src-card .src-origin { font-family:var(--font-mono); font-size:.72rem; color:var(--muted); }
+  .src-card .src-sim { margin-left:auto; font-family:var(--font-mono); font-size:.72rem; color:var(--accent2); }
+  .src-card details { margin-top:.4em; }
+  .src-card summary { cursor:pointer; font-size:.78rem; color:var(--accent2); user-select:none; }
+  .src-card .src-text {
+    margin-top:.4em; font-size:.85rem; color:var(--muted2); border-left:2px solid var(--line);
+    padding-left:.7em;
+  }
+
+  .mem-list { list-style:none; margin:.6rem 0 0; padding:0; display:flex; flex-direction:column; gap:.5rem; }
+  .mem-item {
+    background:var(--panel2); border:1px solid var(--line-soft); border-radius:8px; padding:.6em .8em;
+    font-size:.85rem;
+  }
+  .mem-item .mem-q { color:var(--muted2); font-weight:600; }
+  .mem-item .mem-a { color:var(--muted); margin-top:.25em; }
+  .mem-item .mem-sim { font-family:var(--font-mono); font-size:.72rem; color:var(--accent2); }
+
+  /* Mobile-minimal: explanatory prose collapses behind an explicit toggle on small
+     screens; the interactive core (ask a question / see the answer) is never
+     touched by this and stays visible at every width. Markup defaults every
+     details.explain to `open` (desktop's always-visible layout, and the
+     no-JS fallback); a tiny sync script near the end of <body> closes them on
+     load when the viewport is mobile-width. */
+  details.explain { margin:.6rem 0 0; }
+  details.explain > summary {
+    cursor:pointer; list-style:none; display:flex; align-items:center; gap:.4em;
+    font-family:var(--font-mono); font-size:.78rem; color:var(--accent2);
+    padding:.3em 0; -webkit-user-select:none; user-select:none;
+  }
+  details.explain > summary::-webkit-details-marker { display:none; }
+  details.explain > summary::before { content:'▸'; display:inline-block; transition:transform .15s ease; }
+  details.explain[open] > summary::before { transform:rotate(90deg); }
+  details.explain > summary:hover { color:var(--accent); }
+  details.explain > .explain-body { margin-top:.4rem; }
+  @media (min-width:641px) {
+    details.explain > summary { display:none; }
+  }
+  @media (max-width:640px) {
+    .wrap { padding:1.75rem .9rem 3rem; }
+    h1 { font-size:1.6rem; }
+    p.lede { font-size:.95rem; }
+    section.card { padding:1.15rem 1.1rem 1.35rem; }
+    .src-card .src-sim { margin-left:0; }
+  }
+
+  footer {
+    border-top:1px solid var(--line); margin-top:2.5rem; padding-top:1.75rem;
+    color:var(--muted); font-size:.85rem;
+  }
+  footer .support {
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:1.3rem 1.5rem; margin-bottom:1.5rem;
+  }
+  footer .support p { color:var(--muted2); margin:.3em 0 .8em; }
+  footer .support .links a { margin-right:1.25em; font-size:.85rem; }
+  footer .legal a { color:var(--muted); margin-right:1em; text-decoration:none; }
+  footer .legal a:hover { color:var(--accent2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">part of <a href="https://bunsenbrenner.org" target="_blank" rel="noopener">bunsenbrenner.org</a> — demo portfolio</span>
+    <h1>Distributed RAG</h1>
+    <p class="lede">
+      Ask a question about a small real library — Sherlock Holmes and Pride and Prejudice — and get an
+      answer that cites exactly which retrieved passage backed each claim. The service also recalls
+      related past questions from its own memory of prior interactions.
+    </p>
+  </header>
+
+  <section class="card">
+    <span class="eyebrow">Why this is not just a chatbot</span>
+    <h2>Grounded, on purpose</h2>
+    <details class="explain" open>
+      <summary>How this works</summary>
+      <div class="explain-body">
+        <p class="small">
+          The corpus behind this demo is real public-domain text — ingested from
+          <a href="https://www.gutenberg.org/" target="_blank" rel="noopener">Project Gutenberg</a>,
+          <a href="https://openlibrary.org/" target="_blank" rel="noopener">Open Library</a> and the
+          <a href="https://archive.org/" target="_blank" rel="noopener">Internet Archive</a> — not
+          synthetic or model-generated text. Every question is embedded locally and matched against that
+          corpus to retrieve the most relevant passages, which are numbered <code>[1]</code>,
+          <code>[2]</code>, etc.
+        </p>
+        <p class="small">
+          The model is then instructed, at the system-prompt level, to answer <strong>only</strong> using
+          facts explicitly stated in those retrieved passages, and to cite the passage number after every
+          claim. It is told to say so plainly, rather than guess, if the passages don't cover part of the
+          question. A plain chatbot will happily answer from its training data whether or not it actually
+          knows; this one is structurally blocked from doing that — if a fact isn't in the passages shown
+          on this page, it isn't allowed to appear in the answer.
+        </p>
+      </div>
+    </details>
+  </section>
+
+  <section class="card">
+    <span class="eyebrow">Try it</span>
+    <h2>Ask a question</h2>
+    <form class="ask-row" id="ask-form">
+      <input type="text" id="question-input" placeholder="e.g. How does Sherlock Holmes deduce facts about a client from small physical details, according to Watson?" autocomplete="off" />
+      <button class="btn" id="ask-submit" type="submit">Ask</button>
+    </form>
+    <div class="row">
+      <button class="btn secondary" id="example-btn" type="button">Use an example question</button>
+      <span class="small" id="corpus-note"></span>
+    </div>
+    <div id="ask-status"></div>
+
+    <div id="result" style="display:none">
+      <div class="answer-box" id="answer-box">
+        <div id="answer-text"></div>
+        <div class="meta" id="answer-meta"></div>
+      </div>
+
+      <div id="sources-section">
+        <h3>Sources cited</h3>
+        <ul class="src-list" id="src-list"></ul>
+      </div>
+
+      <div id="memory-section" style="display:none">
+        <h3>Recalled from memory</h3>
+        <p class="small">Past interactions this question reminded the service of, by real vector similarity — kept separate from the answer's grounding, never used as a fact source.</p>
+        <ul class="mem-list" id="mem-list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="support">
+      <h3>Keep the lab running.</h3>
+      <p>Bunsenbrenner is free to use and runs on donated time and server costs. If it helped you get something live, a small contribution keeps it going.</p>
+      <div class="links">
+        <a href="https://steady.page/plans/77a32d9c-c399-4ca1-9515-7a628c7a9413" target="_blank" rel="noopener">Support as a member →</a>
+        <a href="https://buymeacoffee.com/bunsenbrenner" target="_blank" rel="noopener">Buy me a coffee →</a>
+        <a href="https://github.com/scimbe/CADS-DEMO-distributed-rag" target="_blank" rel="noopener">GitHub — feature requests, code review, issues →</a>
+      </div>
+    </div>
+    <div class="legal">
+      <a href="https://bunsenbrenner.org/legal-notice" target="_blank" rel="noopener">Legal notice</a>
+      <a href="https://bunsenbrenner.org/privacy-policy" target="_blank" rel="noopener">Privacy policy</a>
+      <a href="https://bunsenbrenner.org/terms-of-use" target="_blank" rel="noopener">Terms of use</a>
+    </div>
+    <p>© Bunsenbrenner.org — Martin Becke &nbsp;·&nbsp; <a href="https://github.com/scimbe/CADS-DEMO-distributed-rag" target="_blank" rel="noopener">source</a></p>
+  </footer>
+
+</div>
+
+<script>
+  // Mobile-minimal: close the explanatory <details class="explain"> on small
+  // viewports after load; markup defaults them open for desktop / no-JS.
+  (function () {
+    if (window.matchMedia('(max-width: 640px)').matches) {
+      document.querySelectorAll('details.explain[open]').forEach(function (d) { d.open = false; });
+    }
+  })();
+
+  const EXAMPLE_QUESTION = "How does Sherlock Holmes deduce facts about a client from small physical details, according to Watson?";
+
+  const form = document.getElementById('ask-form');
+  const input = document.getElementById('question-input');
+  const submitBtn = document.getElementById('ask-submit');
+  const exampleBtn = document.getElementById('example-btn');
+  const statusEl = document.getElementById('ask-status');
+  const resultEl = document.getElementById('result');
+  const answerText = document.getElementById('answer-text');
+  const answerMeta = document.getElementById('answer-meta');
+  const srcList = document.getElementById('src-list');
+  const memSection = document.getElementById('memory-section');
+  const memList = document.getElementById('mem-list');
+  const corpusNote = document.getElementById('corpus-note');
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function renderAnswer(answer) {
+    const escaped = escapeHtml(answer);
+    return escaped.replace(/\[(\d+)\]/g, function (m, n) {
+      return '<a class="cite" href="#src-' + n + '">[' + n + ']</a>';
+    });
+  }
+
+  function setStatus(kind, message) {
+    if (!message) { statusEl.innerHTML = ''; return; }
+    statusEl.innerHTML = '<div class="status ' + kind + '">' + escapeHtml(message) + '</div>';
+  }
+
+  function renderResult(data) {
+    answerText.innerHTML = renderAnswer(data.answer);
+    answerMeta.textContent = 'Answered by ' + data.backend + (data.model && data.model !== 'none' ? ' · ' + data.model : '');
+
+    srcList.innerHTML = '';
+    data.sources.forEach(function (s) {
+      const li = document.createElement('li');
+      li.className = 'src-card';
+      li.id = 'src-' + s.citation;
+      li.innerHTML =
+        '<div class="src-head">' +
+          '<span class="src-num">[' + s.citation + ']</span>' +
+          '<span class="src-title">' + escapeHtml(s.title) + '</span>' +
+          '<span class="src-origin">' + escapeHtml(s.source) + ' · passage ' + s.passage_index + '</span>' +
+          '<span class="src-sim">similarity ' + s.similarity.toFixed(3) + '</span>' +
+        '</div>' +
+        '<details><summary>Show retrieved passage text</summary>' +
+          '<div class="src-text">' + escapeHtml(s.text) + '</div>' +
+        '</details>';
+      srcList.appendChild(li);
+    });
+
+    const recalled = (data.memory && data.memory.recalled) || [];
+    if (recalled.length > 0) {
+      memList.innerHTML = '';
+      recalled.forEach(function (m) {
+        const li = document.createElement('li');
+        li.className = 'mem-item';
+        li.innerHTML =
+          '<div class="mem-q">' + escapeHtml(m.query) + '</div>' +
+          '<div class="mem-a">' + escapeHtml(m.answer) + '</div>' +
+          '<div class="mem-sim">similarity ' + m.similarity.toFixed(3) + '</div>';
+        memList.appendChild(li);
+      });
+      memSection.style.display = '';
+    } else {
+      memSection.style.display = 'none';
+    }
+
+    resultEl.style.display = '';
+  }
+
+  async function ask(question) {
+    submitBtn.disabled = true;
+    setStatus('pending', 'Retrieving passages and asking the grounded model…');
+    resultEl.style.display = 'none';
+    try {
+      const res = await fetch('/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: question }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error((data && data.detail) || ('request failed with status ' + res.status));
+      }
+      setStatus('ok', 'Answered · ' + data.sources.length + ' source(s) cited.');
+      renderResult(data);
+    } catch (err) {
+      setStatus('bad', 'Error: ' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) { setStatus('bad', 'Type a question first.'); return; }
+    ask(q);
+  });
+
+  exampleBtn.addEventListener('click', function () {
+    input.value = EXAMPLE_QUESTION;
+    ask(EXAMPLE_QUESTION);
+  });
+
+  fetch('/health').then(function (r) { return r.json(); }).then(function (h) {
+    corpusNote.textContent = h.corpus_chunks + ' indexed passages · ' + h.memory_interactions + ' remembered interactions';
+  }).catch(function () {});
+</script>
+</body>
+</html>

@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from rag.embedder import Embedder
@@ -58,6 +59,7 @@ from rag.provider_pool import ChatResult, ProviderPoolError, chat, configured_ba
 from rag.store import SearchResult, Store
 
 REPO_ROOT = Path(__file__).resolve().parent
+STATIC_DIR = REPO_ROOT / "static"
 
 DB_PATH = os.environ.get("RAG_DB_PATH", str(REPO_ROOT / "data" / "rag.sqlite3"))
 MEMORY_PATH = os.environ.get("RAG_MEMORY_PATH", str(REPO_ROOT / "data" / "memory.lance"))
@@ -161,6 +163,11 @@ def _format_context(results: list[SearchResult]) -> str:
             f"similarity: {r.similarity:.3f})\n{r.text.strip()}"
         )
     return "\n\n".join(blocks)
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/health", response_model=HealthResponse)

@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY rag/ ./rag/
 COPY scripts/ ./scripts/
+COPY static/ ./static/
 COPY app.py .
 
 # Everything that must survive a container restart -- the document-corpus SQLite store,
