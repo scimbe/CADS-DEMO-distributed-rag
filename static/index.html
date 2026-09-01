@@ -38,6 +38,7 @@
   }
   .wrap { max-width:920px; margin:0 auto; padding:2.5rem 1.25rem 4rem; }
   header.hero { padding-bottom:1.5rem; border-bottom:1px solid var(--line); margin-bottom:2rem; }
+  .top-row { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; }
   .badge {
     display:inline-block; font-family:var(--font-mono); font-size:.72rem;
     color:var(--muted); border:1px solid var(--line); border-radius:999px;
@@ -46,6 +47,13 @@
   .badge a { color:var(--muted); text-decoration:none; }
   .badge a:hover { color:var(--accent2); }
   p.lede { color:var(--muted2); font-size:1.02rem; max-width:64ch; }
+
+  .lang-toggle { display:flex; gap:.25rem; border:1px solid var(--line); border-radius:8px; padding:.2rem; background:var(--panel2); flex-shrink:0; }
+  .lang-toggle button {
+    font-family:var(--font-mono); font-size:.78rem; font-weight:700; padding:.35em .8em; border-radius:6px;
+    border:none; background:transparent; color:var(--muted); cursor:pointer;
+  }
+  .lang-toggle button[aria-pressed="true"] { background:var(--accent); color:#1a1206; }
   section.card {
     background:var(--panel); border:1px solid var(--line); border-radius:12px;
     padding:1.5rem 1.5rem 1.75rem; margin-bottom:1.5rem;
@@ -163,9 +171,15 @@
 <div class="wrap">
 
   <header class="hero">
-    <span class="badge">part of <a href="https://bunsenbrenner.org" target="_blank" rel="noopener">bunsenbrenner.org</a> — demo portfolio</span>
-    <h1>Distributed RAG</h1>
-    <p class="lede">
+    <div class="top-row">
+      <span class="badge" data-i18n="badge_text">part of <a href="https://bunsenbrenner.org" target="_blank" rel="noopener">bunsenbrenner.org</a> — demo portfolio</span>
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <button type="button" data-lang-btn="de" aria-pressed="false">DE</button>
+        <button type="button" data-lang-btn="en" aria-pressed="true">EN</button>
+      </div>
+    </div>
+    <h1 data-i18n="h1_title">Distributed RAG</h1>
+    <p class="lede" data-i18n="lede">
       Ask a question about a small real library — Sherlock Holmes and Pride and Prejudice — and get an
       answer that cites exactly which retrieved passage backed each claim. The service also recalls
       related past questions from its own memory of prior interactions.
@@ -173,12 +187,12 @@
   </header>
 
   <section class="card">
-    <span class="eyebrow">Why this is not just a chatbot</span>
-    <h2>Grounded, on purpose</h2>
+    <span class="eyebrow" data-i18n="trust_eyebrow">Why this is not just a chatbot</span>
+    <h2 data-i18n="trust_h2">Grounded, on purpose</h2>
     <details class="explain" open>
-      <summary>How this works</summary>
+      <summary data-i18n="trust_toggle_label">How this works</summary>
       <div class="explain-body">
-        <p class="small">
+        <p class="small" data-i18n="trust_p1">
           The corpus behind this demo is real public-domain text — ingested from
           <a href="https://www.gutenberg.org/" target="_blank" rel="noopener">Project Gutenberg</a>,
           <a href="https://openlibrary.org/" target="_blank" rel="noopener">Open Library</a> and the
@@ -187,7 +201,7 @@
           corpus to retrieve the most relevant passages, which are numbered <code>[1]</code>,
           <code>[2]</code>, etc.
         </p>
-        <p class="small">
+        <p class="small" data-i18n="trust_p2">
           The model is then instructed, at the system-prompt level, to answer <strong>only</strong> using
           facts explicitly stated in those retrieved passages, and to cite the passage number after every
           claim. It is told to say so plainly, rather than guess, if the passages don't cover part of the
@@ -200,14 +214,14 @@
   </section>
 
   <section class="card">
-    <span class="eyebrow">Try it</span>
-    <h2>Ask a question</h2>
+    <span class="eyebrow" data-i18n="ask_eyebrow">Try it</span>
+    <h2 data-i18n="ask_h2">Ask a question</h2>
     <form class="ask-row" id="ask-form">
-      <input type="text" id="question-input" placeholder="e.g. How does Sherlock Holmes deduce facts about a client from small physical details, according to Watson?" autocomplete="off" />
-      <button class="btn" id="ask-submit" type="submit">Ask</button>
+      <input type="text" id="question-input" data-i18n-placeholder="question_placeholder" placeholder="e.g. How does Sherlock Holmes deduce facts about a client from small physical details, according to Watson?" autocomplete="off" />
+      <button class="btn" id="ask-submit" type="submit" data-i18n="ask_button">Ask</button>
     </form>
     <div class="row">
-      <button class="btn secondary" id="example-btn" type="button">Use an example question</button>
+      <button class="btn secondary" id="example-btn" type="button" data-i18n="example_button">Use an example question</button>
       <span class="small" id="corpus-note"></span>
     </div>
     <div id="ask-status"></div>
@@ -219,13 +233,13 @@
       </div>
 
       <div id="sources-section">
-        <h3>Sources cited</h3>
+        <h3 data-i18n="sources_h3">Sources cited</h3>
         <ul class="src-list" id="src-list"></ul>
       </div>
 
       <div id="memory-section" style="display:none">
-        <h3>Recalled from memory</h3>
-        <p class="small">Past interactions this question reminded the service of, by real vector similarity — kept separate from the answer's grounding, never used as a fact source.</p>
+        <h3 data-i18n="memory_h3">Recalled from memory</h3>
+        <p class="small" data-i18n="memory_note">Past interactions this question reminded the service of, by real vector similarity — kept separate from the answer's grounding, never used as a fact source.</p>
         <ul class="mem-list" id="mem-list"></ul>
       </div>
     </div>
@@ -233,25 +247,156 @@
 
   <footer>
     <div class="support">
-      <h3>Keep the lab running.</h3>
-      <p>Bunsenbrenner is free to use and runs on donated time and server costs. If it helped you get something live, a small contribution keeps it going.</p>
+      <h3 data-i18n="footer_support_h3">Keep the lab running.</h3>
+      <p data-i18n="footer_support_p">Bunsenbrenner is free to use and runs on donated time and server costs. If it helped you get something live, a small contribution keeps it going.</p>
       <div class="links">
-        <a href="https://steady.page/plans/77a32d9c-c399-4ca1-9515-7a628c7a9413" target="_blank" rel="noopener">Support as a member →</a>
-        <a href="https://buymeacoffee.com/bunsenbrenner" target="_blank" rel="noopener">Buy me a coffee →</a>
-        <a href="https://github.com/scimbe/CADS-DEMO-distributed-rag" target="_blank" rel="noopener">GitHub — feature requests, code review, issues →</a>
+        <a href="https://steady.page/plans/77a32d9c-c399-4ca1-9515-7a628c7a9413" target="_blank" rel="noopener" data-i18n="footer_link_member">Support as a member →</a>
+        <a href="https://buymeacoffee.com/bunsenbrenner" target="_blank" rel="noopener" data-i18n="footer_link_coffee">Buy me a coffee →</a>
+        <a href="https://github.com/scimbe/CADS-DEMO-distributed-rag" target="_blank" rel="noopener" data-i18n="footer_link_github">GitHub — feature requests, code review, issues →</a>
       </div>
     </div>
     <div class="legal">
-      <a href="https://bunsenbrenner.org/legal-notice" target="_blank" rel="noopener">Legal notice</a>
-      <a href="https://bunsenbrenner.org/privacy-policy" target="_blank" rel="noopener">Privacy policy</a>
-      <a href="https://bunsenbrenner.org/terms-of-use" target="_blank" rel="noopener">Terms of use</a>
+      <a href="https://bunsenbrenner.org/legal-notice" target="_blank" rel="noopener" data-i18n="footer_legal_notice">Legal notice</a>
+      <a href="https://bunsenbrenner.org/privacy-policy" target="_blank" rel="noopener" data-i18n="footer_privacy">Privacy policy</a>
+      <a href="https://bunsenbrenner.org/terms-of-use" target="_blank" rel="noopener" data-i18n="footer_terms">Terms of use</a>
     </div>
-    <p>© Bunsenbrenner.org — Martin Becke &nbsp;·&nbsp; <a href="https://github.com/scimbe/CADS-DEMO-distributed-rag" target="_blank" rel="noopener">source</a></p>
+    <p>© Bunsenbrenner.org — Martin Becke &nbsp;·&nbsp; <a href="https://github.com/scimbe/CADS-DEMO-distributed-rag" target="_blank" rel="noopener" data-i18n="footer_source">source</a></p>
   </footer>
 
 </div>
 
 <script>
+  // DE/EN language switcher — same plain data-i18n attribute + innerHTML swap
+  // pattern as CADS-DEMO-govdata's static/i18n.js (portfolio-wide convention).
+  // Inlined here (rather than a separate /static/i18n.js file) because this
+  // app's own backend serves only index.html at "/" with no static-file mount
+  // for other assets -- keeping this purely a frontend/UI-string change.
+  // Exposes t(key) + I18N_LANG so the rest of this page's script can
+  // translate strings it builds dynamically (status messages, source-card
+  // chrome, the corpus note).
+  var I18N = {
+  de: {
+    doc_title: "Distributed RAG — faktenverankerte Antworten über einen echten Bibliothekskorpus",
+    badge_text: "Teil von <a href=\"https://bunsenbrenner.org\" target=\"_blank\" rel=\"noopener\">bunsenbrenner.org</a> — Demo-Portfolio",
+    h1_title: "Distributed RAG",
+    lede: "Stelle eine Frage zu einer kleinen, echten Bibliothek — Sherlock Holmes und Stolz und Vorurteil — und erhalte eine Antwort, die für jede Behauptung exakt angibt, welche abgerufene Textstelle sie belegt. Der Dienst erinnert sich außerdem an verwandte frühere Fragen aus seinem eigenen Gedächtnis vergangener Interaktionen.",
+    trust_eyebrow: "Warum das kein gewöhnlicher Chatbot ist",
+    trust_h2: "Verankert, mit Absicht",
+    trust_toggle_label: "So funktioniert es",
+    trust_p1: "Der Korpus hinter dieser Demo besteht aus echtem, gemeinfreiem Text — eingelesen von <a href=\"https://www.gutenberg.org/\" target=\"_blank\" rel=\"noopener\">Project Gutenberg</a>, <a href=\"https://openlibrary.org/\" target=\"_blank\" rel=\"noopener\">Open Library</a> und dem <a href=\"https://archive.org/\" target=\"_blank\" rel=\"noopener\">Internet Archive</a> — nicht aus synthetischem oder modellgeneriertem Text. Jede Frage wird lokal in ein Embedding umgewandelt und mit diesem Korpus abgeglichen, um die relevantesten Textstellen abzurufen, die mit <code>[1]</code>, <code>[2]</code> usw. nummeriert werden.",
+    trust_p2: "Das Modell wird anschließend auf Ebene des System-Prompts angewiesen, ausschließlich mit Fakten zu antworten, die explizit in diesen abgerufenen Textstellen stehen, und nach jeder Behauptung die Nummer der Textstelle zu zitieren. Deckt eine Textstelle einen Teil der Frage nicht ab, soll das Modell das offen sagen, statt zu raten. Ein gewöhnlicher Chatbot antwortet bereitwillig aus seinen Trainingsdaten, ob er es tatsächlich weiß oder nicht; dieses Modell ist strukturell daran gehindert — steht ein Fakt nicht in den auf dieser Seite gezeigten Textstellen, darf er auch nicht in der Antwort erscheinen.",
+    ask_eyebrow: "Ausprobieren",
+    ask_h2: "Frag etwas",
+    question_placeholder: "z. B. Wie leitet Sherlock Holmes laut Watson Fakten über einen Klienten aus kleinen körperlichen Details ab?",
+    ask_button: "Fragen",
+    example_button: "Beispielfrage verwenden",
+    sources_h3: "Zitierte Quellen",
+    memory_h3: "Aus dem Gedächtnis abgerufen",
+    memory_note: "Frühere Interaktionen, an die diese Frage den Dienst per echter Vektor-Ähnlichkeit erinnert hat — getrennt von der Antwort-Fundierung gehalten und nie als Faktenquelle verwendet.",
+    show_passage_label: "Abgerufene Textstelle anzeigen",
+    answer_meta_by: "Beantwortet von ",
+    src_passage_word: "Textstelle",
+    src_similarity_label: "Ähnlichkeit",
+    corpus_note_template: "{passages} indizierte Textstellen · {interactions} erinnerte Interaktionen",
+    status_type_question: "Gib zuerst eine Frage ein.",
+    status_pending: "Suche Textstellen und frage das faktenverankerte Modell …",
+    status_answered_template: "Beantwortet · {n} Quelle(n) zitiert.",
+    status_error_prefix: "Fehler: ",
+    footer_support_h3: "Halte das Labor am Laufen.",
+    footer_support_p: "Bunsenbrenner ist kostenlos nutzbar und läuft mit gespendeter Zeit und Serverkosten. Wenn es dir geholfen hat, etwas live zu bringen, hält ein kleiner Beitrag es am Laufen.",
+    footer_link_member: "Als Mitglied unterstützen →",
+    footer_link_coffee: "Einen Kaffee spendieren →",
+    footer_link_github: "GitHub — Feature-Wünsche, Code-Review, Issues →",
+    footer_legal_notice: "Impressum",
+    footer_privacy: "Datenschutz",
+    footer_terms: "Nutzungsbedingungen",
+    footer_source: "Quellcode"
+  },
+  en: {
+    doc_title: "Distributed RAG — grounded answers over a real library corpus",
+    badge_text: "part of <a href=\"https://bunsenbrenner.org\" target=\"_blank\" rel=\"noopener\">bunsenbrenner.org</a> — demo portfolio",
+    h1_title: "Distributed RAG",
+    lede: "Ask a question about a small real library — Sherlock Holmes and Pride and Prejudice — and get an answer that cites exactly which retrieved passage backed each claim. The service also recalls related past questions from its own memory of prior interactions.",
+    trust_eyebrow: "Why this is not just a chatbot",
+    trust_h2: "Grounded, on purpose",
+    trust_toggle_label: "How this works",
+    trust_p1: "The corpus behind this demo is real public-domain text — ingested from <a href=\"https://www.gutenberg.org/\" target=\"_blank\" rel=\"noopener\">Project Gutenberg</a>, <a href=\"https://openlibrary.org/\" target=\"_blank\" rel=\"noopener\">Open Library</a> and the <a href=\"https://archive.org/\" target=\"_blank\" rel=\"noopener\">Internet Archive</a> — not synthetic or model-generated text. Every question is embedded locally and matched against that corpus to retrieve the most relevant passages, which are numbered <code>[1]</code>, <code>[2]</code>, etc.",
+    trust_p2: "The model is then instructed, at the system-prompt level, to answer only using facts explicitly stated in those retrieved passages, and to cite the passage number after every claim. It is told to say so plainly, rather than guess, if the passages don't cover part of the question. A plain chatbot will happily answer from its training data whether or not it actually knows; this one is structurally blocked from doing that — if a fact isn't in the passages shown on this page, it isn't allowed to appear in the answer.",
+    ask_eyebrow: "Try it",
+    ask_h2: "Ask a question",
+    question_placeholder: "e.g. How does Sherlock Holmes deduce facts about a client from small physical details, according to Watson?",
+    ask_button: "Ask",
+    example_button: "Use an example question",
+    sources_h3: "Sources cited",
+    memory_h3: "Recalled from memory",
+    memory_note: "Past interactions this question reminded the service of, by real vector similarity — kept separate from the answer's grounding, never used as a fact source.",
+    show_passage_label: "Show retrieved passage text",
+    answer_meta_by: "Answered by ",
+    src_passage_word: "passage",
+    src_similarity_label: "similarity",
+    corpus_note_template: "{passages} indexed passages · {interactions} remembered interactions",
+    status_type_question: "Type a question first.",
+    status_pending: "Retrieving passages and asking the grounded model…",
+    status_answered_template: "Answered · {n} source(s) cited.",
+    status_error_prefix: "Error: ",
+    footer_support_h3: "Keep the lab running.",
+    footer_support_p: "Bunsenbrenner is free to use and runs on donated time and server costs. If it helped you get something live, a small contribution keeps it going.",
+    footer_link_member: "Support as a member →",
+    footer_link_coffee: "Buy me a coffee →",
+    footer_link_github: "GitHub — feature requests, code review, issues →",
+    footer_legal_notice: "Legal notice",
+    footer_privacy: "Privacy policy",
+    footer_terms: "Terms of use",
+    footer_source: "source"
+  }
+  };
+
+  var I18N_LANG = 'en';
+
+  function t(key) {
+    var dict = I18N[I18N_LANG] || I18N.en;
+    var fallback = I18N.en;
+    return dict[key] !== undefined ? dict[key] : fallback[key];
+  }
+
+  function applyLang(lang) {
+    if (!I18N[lang]) lang = 'en';
+    I18N_LANG = lang;
+    var dict = I18N[lang];
+    var fallback = I18N.en;
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n');
+      var val = dict[key] !== undefined ? dict[key] : fallback[key];
+      if (val !== undefined) el.innerHTML = val;
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n-placeholder');
+      var val = dict[key] !== undefined ? dict[key] : fallback[key];
+      if (val !== undefined) el.setAttribute('placeholder', val);
+    });
+    document.title = dict.doc_title || fallback.doc_title;
+    document.querySelectorAll('[data-lang-btn]').forEach(function (btn) {
+      var active = btn.getAttribute('data-lang-btn') === lang;
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    try { localStorage.setItem('rag-lang', lang); } catch (e) {}
+    if (window.onLangChanged) window.onLangChanged(lang);
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-lang-btn]').forEach(function (btn) {
+      btn.addEventListener('click', function () { applyLang(this.getAttribute('data-lang-btn')); });
+    });
+    var saved = 'en';
+    try {
+      var stored = localStorage.getItem('rag-lang');
+      if (stored) saved = stored;
+      else if ((navigator.language || '').toLowerCase().indexOf('de') === 0) saved = 'de';
+    } catch (e) {}
+    applyLang(saved);
+  });
+
   // Mobile-minimal: close the explanatory <details class="explain"> on small
   // viewports after load; markup defaults them open for desktop / no-JS.
   (function () {
@@ -275,6 +420,12 @@
   const memList = document.getElementById('mem-list');
   const corpusNote = document.getElementById('corpus-note');
 
+  // Last successfully rendered /query response and /health snapshot, kept so a
+  // language toggle can re-render already-visible dynamic chrome (source-card
+  // labels, the answered-by line, the corpus note) without re-querying.
+  let lastResultData = null;
+  let lastHealthData = null;
+
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -293,9 +444,17 @@
     statusEl.innerHTML = '<div class="status ' + kind + '">' + escapeHtml(message) + '</div>';
   }
 
+  function renderCorpusNote() {
+    if (!lastHealthData) return;
+    corpusNote.textContent = t('corpus_note_template')
+      .replace('{passages}', lastHealthData.corpus_chunks)
+      .replace('{interactions}', lastHealthData.memory_interactions);
+  }
+
   function renderResult(data) {
+    lastResultData = data;
     answerText.innerHTML = renderAnswer(data.answer);
-    answerMeta.textContent = 'Answered by ' + data.backend + (data.model && data.model !== 'none' ? ' · ' + data.model : '');
+    answerMeta.textContent = t('answer_meta_by') + data.backend + (data.model && data.model !== 'none' ? ' · ' + data.model : '');
 
     srcList.innerHTML = '';
     data.sources.forEach(function (s) {
@@ -306,10 +465,10 @@
         '<div class="src-head">' +
           '<span class="src-num">[' + s.citation + ']</span>' +
           '<span class="src-title">' + escapeHtml(s.title) + '</span>' +
-          '<span class="src-origin">' + escapeHtml(s.source) + ' · passage ' + s.passage_index + '</span>' +
-          '<span class="src-sim">similarity ' + s.similarity.toFixed(3) + '</span>' +
+          '<span class="src-origin">' + escapeHtml(s.source) + ' · ' + t('src_passage_word') + ' ' + s.passage_index + '</span>' +
+          '<span class="src-sim">' + t('src_similarity_label') + ' ' + s.similarity.toFixed(3) + '</span>' +
         '</div>' +
-        '<details><summary>Show retrieved passage text</summary>' +
+        '<details><summary>' + t('show_passage_label') + '</summary>' +
           '<div class="src-text">' + escapeHtml(s.text) + '</div>' +
         '</details>';
       srcList.appendChild(li);
@@ -324,7 +483,7 @@
         li.innerHTML =
           '<div class="mem-q">' + escapeHtml(m.query) + '</div>' +
           '<div class="mem-a">' + escapeHtml(m.answer) + '</div>' +
-          '<div class="mem-sim">similarity ' + m.similarity.toFixed(3) + '</div>';
+          '<div class="mem-sim">' + t('src_similarity_label') + ' ' + m.similarity.toFixed(3) + '</div>';
         memList.appendChild(li);
       });
       memSection.style.display = '';
@@ -337,7 +496,7 @@
 
   async function ask(question) {
     submitBtn.disabled = true;
-    setStatus('pending', 'Retrieving passages and asking the grounded model…');
+    setStatus('pending', t('status_pending'));
     resultEl.style.display = 'none';
     try {
       const res = await fetch('/query', {
@@ -349,10 +508,10 @@
       if (!res.ok) {
         throw new Error((data && data.detail) || ('request failed with status ' + res.status));
       }
-      setStatus('ok', 'Answered · ' + data.sources.length + ' source(s) cited.');
+      setStatus('ok', t('status_answered_template').replace('{n}', data.sources.length));
       renderResult(data);
     } catch (err) {
-      setStatus('bad', 'Error: ' + err.message);
+      setStatus('bad', t('status_error_prefix') + err.message);
     } finally {
       submitBtn.disabled = false;
     }
@@ -361,7 +520,7 @@
   form.addEventListener('submit', function (e) {
     e.preventDefault();
     const q = input.value.trim();
-    if (!q) { setStatus('bad', 'Type a question first.'); return; }
+    if (!q) { setStatus('bad', t('status_type_question')); return; }
     ask(q);
   });
 
@@ -371,8 +530,19 @@
   });
 
   fetch('/health').then(function (r) { return r.json(); }).then(function (h) {
-    corpusNote.textContent = h.corpus_chunks + ' indexed passages · ' + h.memory_interactions + ' remembered interactions';
+    lastHealthData = h;
+    renderCorpusNote();
   }).catch(function () {});
+
+  // Re-render already-visible dynamic chrome in the new language when the
+  // toggle is used mid-session, without re-querying the backend.
+  window.onLangChanged = function () {
+    renderCorpusNote();
+    if (lastResultData) {
+      setStatus('ok', t('status_answered_template').replace('{n}', lastResultData.sources.length));
+      renderResult(lastResultData);
+    }
+  };
 </script>
 </body>
 </html>

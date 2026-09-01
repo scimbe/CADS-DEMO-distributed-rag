@@ -1,409 +1,239 @@
 # CADS-DEMO-distributed-rag
 
-**Status: bootstrap / proof-of-concept. Not a finished demo. Not yet packaged as a
-marketplace manifest. Read "What's NOT built yet" below before assuming this is done.**
+A retrieval-augmented question-answering service over a small real public-domain book
+corpus. Ask a question, get an answer that cites exactly which retrieved passage backed
+each claim — with a system prompt that structurally forbids the model from adding
+anything not present in those passages. Part of the bunsenbrenner.org demo portfolio
+([marketplace#33](https://github.com/scimbe/CADS-agent-marketplace/issues/33)).
 
-Part of the bunsenbrenner.org demo portfolio
-([marketplace#33](https://github.com/scimbe/CADS-agent-marketplace/issues/33)). The
-target audience is devs/power-users; the point is to show real platform maturity — a
-distributed-harness-style memory/context system, not just a scripted demo.
+**Status: working demo, running live on this host, not yet packaged for the
+marketplace.** The `/query` and `/health` endpoints are real and containerized; there is
+no signed marketplace manifest and no install/uninstall cycle through ct-agent's
+installer-engine yet. See "What's not built yet" below.
 
-This bootstrap proves the hardest constraint from the issue first: a **fully local
-embedding pipeline** (no API key, no external service, no per-request cost) feeding
-**three real, free, key-less connectors** (Gutendex, Open Library, Internet Archive)
-to public-domain book/library sources, with **genuine retrieval** verified by a human
-reading the retrieved text.
+## Why this exists
 
-## The "really free, no costs under any circumstances" requirement
-
-Every component that ingestion/retrieval depends on for this bootstrap runs locally or
-against a free, key-less public API:
-
-- **Embedding model**: runs on this machine, once downloaded and cached — no API key,
-  no per-call billing, works fully offline after the first run.
-- **Connectors**: [Gutendex](https://gutendex.com) + gutenberg.org (full book text),
-  [Open Library](https://openlibrary.org/developers/api) (bibliographic/descriptive
-  text), and [Internet Archive](https://archive.org/developers/) (full book text from
-  its own freely-downloadable, non-lending-restricted items) — all free, public,
-  key-less APIs, no authentication, no rate-limit-behind-a-paywall.
-- **Store**: a local SQLite file — no hosted database.
-
-Nothing in this bootstrap calls any paid service, any team member's personal API key,
-or any hosted "embed_text"-style channel service another maintainer runs. That would
-have violated the issue's explicit "no hard external dependency" requirement — this
-must be installable by *anyone* via ct-agent, not just people with access to our
-internal services.
-
-## Embedding model: verified license
-
-**Model: [`BAAI/bge-small-en-v1.5`](https://huggingface.co/BAAI/bge-small-en-v1.5)**
-(33M parameters, 384-dim output, English).
-
-**License: MIT.** Verified directly on the model's Hugging Face model card on
-2026-08-30 (not from any secondhand description): *"FlagEmbedding is licensed under the
-[MIT License](https://github.com/FlagOpen/FlagEmbedding/blob/master/LICENSE). The
-released models can be used for commercial purposes free of charge."* This project has
-been burned before by trusting a model's marketing blurb over its actual license (a 3B
-variant of an otherwise-permissive model family turned out to be non-commercial-only),
-so this was checked at the source, not assumed from the issue's own research notes.
-
-The issue's other candidate, `nomic-ai/nomic-embed-text-v1.5` (137M params, 8K context),
-was also checked at the source and is genuinely **Apache-2.0** — also fine license-wise.
-BGE-small was picked over it for this bootstrap because it's smaller, has no required
-query/document prefix convention to get right, and is a very well-trodden path for
-offline ONNX inference. Nomic Embed remains a legitimate option if a future iteration
-needs its longer context window.
-
-## Inference path: `fastembed`, not `sentence-transformers` or a Rust port
-
-Chosen: **[`fastembed`](https://github.com/qdrant/fastembed)** (Apache-2.0, maintained
-by Qdrant), which runs BGE-small as a quantized ONNX graph via `onnxruntime`. Reasoning:
-
-- **vs. `sentence-transformers`**: `sentence-transformers` pulls in full PyTorch, a
-  multi-GB dependency, to run a 33M-parameter model. `fastembed`'s ONNX path is a small,
-  fast, CPU-friendly install with no GPU/CUDA story to get right for a demo that has to
-  install cleanly for "anyone."
-- **vs. a hand-rolled Rust path (`candle` or raw `ort`)**: this project's own
-  `crates/harness-memory` (in `CADS-agent-marketplace`) already establishes the target
-  storage pattern in Rust (SQLite BLOB + brute-force cosine — mirrored here, see below),
-  and the eventual packaged manifest may want a Rust binary to match that convention.
-  For *this bootstrap*, Python + `fastembed` was faster to stand up and verify actually
-  working end to end within one sitting, and is explicitly not the final answer — see
-  "Rust port" under What's NOT built yet.
-
-Verified working (2026-08-30): loaded `BAAI/bge-small-en-v1.5` via `fastembed`, embedded
-a sample sentence, got back a real `float32` vector of shape `(384,)`, L2-normalized
-(`norm == 1.0`). No mocking — this actually ran.
+The point isn't "another chatbot wrapper" — it's demonstrating that the platform can
+host a genuinely grounded RAG pipeline with **zero hard external dependency**: local
+embeddings (no API key, no per-call billing), three free key-less connectors for real
+book/library text, and a local vector store, all wired behind one containerized HTTP
+service that only reaches out to an LLM at answer-synthesis time. Two things make an
+answer trustworthy rather than just plausible: retrieval is grounded in real ingested
+text (not the model's training data), and every claim carries a `[n]` citation back to
+the passage that supports it — verifiable by a human reading the same passage.
 
 ## Architecture
 
 ```
-Gutendex          Open Library          Internet Archive
-(full book text)  (descriptive text)    (full book text, non-restricted items only)
-        │                │                       │
-        ▼                ▼                       ▼
-rag/gutendex.py   rag/openlibrary.py      rag/internetarchive.py
-        │                │                       │
-        └────────────────┴───────────┬───────────┘
-                                      ▼
-                    chunk_text()  — ~800-char paragraph-aligned
-                                    passages with overlap (defined in
-                                    rag/gutendex.py, shared by all three)
-                                      │
-                                      ▼
-rag/embedder.py  — BAAI/bge-small-en-v1.5 via fastembed (local, ONNX, no network
-                    call at inference time)
-                                      │  384-dim float32 vector per passage
-                                      ▼
-rag/store.py     — SQLite, one row per passage, embedding stored as a packed
-                    float32 BLOB, brute-force cosine search over all rows
+Gutendex/gutenberg.org   Open Library   Internet Archive     (free, key-less connectors)
+        │                     │                │
+        └─────────────────────┴────────┬───────┘
+                                        ▼
+                          chunk_text() — ~800-char, paragraph-aligned
+                                        │
+                                        ▼
+        rag/embedder.py — BAAI/bge-small-en-v1.5 via fastembed (local ONNX,
+                           no network call at inference time)
+                                        │  384-dim float32 vector
+                                        ▼
+        rag/store.py — SQLite, one row per passage, embedding as a packed
+                        float32 BLOB, brute-force cosine search
+
+        rag/memory.py — separate LanceDB store of past (query, answer) pairs,
+                        recalled by similarity but never fed into the LLM prompt
+                        (so a prior answer can never masquerade as a source fact)
+
+question ──► embed once ──► POST /query (app.py)
+                              1. retrieve top-k corpus chunks
+                              2. recall related past interactions (memory, informational only)
+                              3. build a grounded prompt from the chunks only
+                              4. call the LLM via rag/provider_pool.py
+                              5. remember (question, answer)
 ```
 
-All three connectors feed the identical downstream pipeline via
-`scripts/ingest.py <source> <id>` (`source` is `gutenberg`/`openlibrary`/`archive`) —
-see "Reproduce it yourself" below.
+`rag/provider_pool.py` routes LLM calls to the team's local litellm-proxy first and
+falls through to Groq only if `GROQ_API_KEY` is set — never a hard dependency; with no
+Groq key configured, a local outage just surfaces as a normal error.
 
-This mirrors `CADS-agent-marketplace`'s own `crates/harness-memory/src/db.rs` pattern:
-plain SQLite + a BLOB vector column + brute-force cosine, not a vector-DB dependency —
-that crate's own reasoning applies here too (sub-millisecond to low-millisecond search
-at the scale of one ingested book's worth of passages; this is demo-scale, not
-web-scale).
+## Running it
 
-The issue's own architecture additionally describes a separate **memory layer**
-(ChromaDB/LanceDB, for cross-session interaction memory, distinct from this document
-corpus — now built, see "Long-term interaction memory" below) and a **dynamic
-free-provider LLM pool** (OpenRouter/Groq/Cerebras/Cloudflare Workers AI, as
-resilience/fallback alongside the team's own `local-devstral-small2` — also built,
-see below).
-
-## What's actually proven working (ran, not just written)
-
-1. **Local embedding pipeline** — loaded the model, embedded real text, got a real
-   384-dim normalized vector back. See "Inference path" above.
-2. **Gutendex connector, end to end** — fetched real metadata and the real plain-text
-   body of *The Adventures of Sherlock Holmes* (Project Gutenberg id 1661) from
-   `gutendex.com` + `gutenberg.org`, no key, no auth.
-3. **Chunk → embed → store** — the fetched book's boilerplate-stripped text was split
-   into passages and every passage was embedded locally and stored in a SQLite file
-   with its vector as a BLOB.
-4. **Retrieval, verified by reading the result, not trusting the score** — a natural-
-   language query embedded with the same local model retrieved the top-matching stored
-   passage(s) via brute-force cosine similarity; the retrieved text was read and
-   confirmed to genuinely relate to the query (see `scripts/query.py` output / the
-   ingest+query run recorded in the PR/commit this README ships with).
-5. **Open Library connector, end to end** — a real live `GET
-   https://openlibrary.org/search.json?q=pride+and+prejudice` returned work key
-   `/works/OL66554W`; `GET https://openlibrary.org/works/OL66554W.json` returned
-   *Pride and Prejudice*'s real description, first-sentence excerpt ("It is a truth
-   universally acknowledged...") and subject tags, no key, no auth. Assembled into a
-   1812-char document, split into 3 passages, embedded locally, and stored (source
-   `openlibrary:OL66554W`) via `scripts/ingest.py openlibrary OL66554W`.
-6. **Internet Archive connector, end to end** — a real live `GET
-   https://archive.org/advancedsearch.php?q=(pride and prejudice) AND
-   mediatype:texts` located item `prideandprejudic42671gut` (an archive.org-hosted
-   Project Gutenberg mirror, `access-restricted-item` absent); `GET
-   https://archive.org/metadata/prideandprejudic42671gut` found a real downloadable
-   `42671.txt` (format `Text`, 725,090 bytes); fetching it returned the genuine full
-   novel text (verified: contains "It is a truth universally acknowledged..." at
-   character offset 1903, and the standard Project Gutenberg header/footer markers,
-   correctly stripped by the shared `strip_gutenberg_boilerplate()` down to 705,474
-   chars of body text). Split into 1202 passages, embedded locally, and stored
-   (source `archive:prideandprejudic42671gut`) via
-   `scripts/ingest.py archive prideandprejudic42671gut`.
-7. **Cross-connector retrieval, verified by reading the result** — with all three
-   connectors' data in one store (2167 chunks total: Gutendex + Open Library +
-   Internet Archive), `scripts/query.py "Mr. Darcy's pride and his feelings for
-   Elizabeth Bennet"` retrieved, in its top 5, genuinely on-topic passages from
-   *both* new connectors alongside Gutendex-sourced ones — `archive:` passages
-   quoting Darcy/Elizabeth's actual dialogue (similarity 0.79/0.78/0.78) and the
-   `openlibrary:` descriptive passage (similarity 0.78) — read in full and confirmed
-   on-topic, not assumed from the score.
-
-Reproduce it yourself:
+Directly:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python scripts/ingest.py gutenberg 1661             # fetches + embeds + stores one real book
-.venv/bin/python scripts/ingest.py openlibrary OL66554W       # real bibliographic/descriptive text
-.venv/bin/python scripts/ingest.py archive prideandprejudic42671gut  # real full book text
-.venv/bin/python scripts/query.py "Sherlock Holmes deduces something about a client from small details"
-```
-
-## Long-term interaction memory (distinct from the document corpus)
-
-**`rag/memory.py`** — the issue's separate "context-optimization" memory layer:
-top-K semantic recall over past query/answer interactions, instead of a
-linear-growing context window. This is *not* the document corpus (`rag/store.py`
-holds ingested book passages) — it's what was asked and answered before, so a later
-turn can pull back a handful of relevant prior interactions rather than replaying
-the whole conversation history.
-
-**Library: [LanceDB](https://pypi.org/project/lancedb/)** (embedded/local mode, no
-server process). License-checked directly at the source on 2026-08-30, not assumed:
-**Apache License, Version 2.0**, confirmed both on the PyPI project page and by
-fetching `LICENSE` from
-[github.com/lancedb/lancedb](https://github.com/lancedb/lancedb/blob/main/LICENSE).
-The issue's other named option, **ChromaDB**, was also checked the same way and is
-also genuinely Apache-2.0 for its local/self-hosted modes (its optional "Chroma
-Cloud" tier is paid, but never required). LanceDB was picked because its embedded
-mode — `lancedb.connect(<local path>)`, a local directory of Lance/Arrow files, no
-daemon — is the closer match to this repo's existing footprint (`rag/store.py` is
-one local SQLite file, same shape: a local store, no server to run). No network
-call, no API key, no billing relationship — same "really free" guarantee as the
-rest of this repo; confirmed by running `remember()`/`recall()` end to end with
-DNS resolution actively blocked at the socket layer and no failure.
-
-Each interaction is embedded on its `query` text with the same local `Embedder`
-(`rag/embedder.py`, BAAI/bge-small-en-v1.5 via fastembed) already used for the
-document corpus — mirrors `rag/store.py`'s convention of embedding the text you'd
-actually search against.
-
-Verified: `tests/test_memory.py` (3 unit tests, real embedder + real embedded
-LanceDB table, nothing mocked). Several genuinely distinct interactions (pasta
-recipe, French Revolution date, Python asyncio, Mount Kilimanjaro's height) plus
-two Sherlock-Holmes-deduction interactions were stored; a new Holmes-deduction
-query recalled both Holmes interactions in the top two slots, strictly ahead of
-every distractor (cosine similarity ≈0.72–0.74 for the Holmes interactions vs.
-≈0.52 for the closest distractor). Same discipline as the corpus retrieval check
-described above: the recalled `(query, answer)` pairs were read back and confirmed
-by identity to be the genuinely on-topic interactions, not just "the score was
-highest."
-
-## Dynamic free-provider LLM fallback pool
-
-**`rag/provider_pool.py`** — the issue's router that tries the team's local
-litellm-proxy first (`LITELLM_BASE_URL`/`LITELLM_API_KEY`/`LITELLM_DEFAULT_MODEL`,
-the same convention every other CADS-DEMO-* repo uses) and falls through to ONE
-external free provider on a rate-limit/connection failure — never a hard dependency;
-with `GROQ_API_KEY` unset, a local outage just surfaces as a normal error instead of
-silently reaching a third party.
-
-**Provider chosen: [Groq](https://groq.com).** Re-checked against the issue's own
-`free-ai-tools` list (2026-08-30, not the stale 2026-08-28 research) alongside
-OpenRouter/Cerebras/Cloudflare Workers AI. Groq wins for a single always-on fallback:
-14,400 req/day on `llama-3.1-8b-instant` (vs. OpenRouter's 50 req/day shared across
-all free models), no credit card for free-tier signup, and a drop-in OpenAI-compatible
-endpoint (`https://api.groq.com/openai/v1/chat/completions`) — same request/response
-shape as the local litellm-proxy, so the router needs no per-provider translation.
-
-Verified: the fallback-routing logic itself (10 unit tests in
-`tests/test_provider_pool.py`, mocked — local success, local rate-limit/connection/5xx
-→ Groq fallback, a non-retryable local failure like 401 correctly *not* triggering a
-fallback, no-backend-configured refusing before any network call, per-backend model
-isolation). Also live-confirmed real network reachability of Groq's exact endpoint
-(`scripts/verify_provider_pool.py` against `https://api.groq.com/openai/v1/chat/completions`
-with a placeholder key returned a real `401 Unauthorized` — the right shape of failure,
-proving the URL/path/request format are correct). **Not verified:** an actual successful
-completion from Groq, because obtaining a real free API key requires an interactive
-Google/GitHub-OAuth or email-OTP signup step this session couldn't complete headlessly
-(confirmed by navigating to `console.groq.com/keys`) without acting on the operator's
-real identity/inbox, which was out of scope here. Get a free key (\~30s, no card) at
-<https://console.groq.com/keys> and re-run `scripts/verify_provider_pool.py` to close
-this gap.
-
-## The `/query` HTTP service
-
-`app.py` wires every piece above into ONE real web service (FastAPI + uvicorn — the
-repo had no framework implied by its existing dependencies, so FastAPI was the
-reasonable default per marketplace#33's own instructions), matching the "small HTTP
-service, not just a CLI script" pattern `crates/harness-memory` already established
-elsewhere in this project (`main.rs`/`lib.rs`: env-configured, `axum::serve`) and the
-single-`app.py`-plus-Dockerfile shape of
-`manifests/litellm-proof/heartbeat-proxy` in `CADS-agent-marketplace`.
-
-```
-                 rag/store.py (SQLite)          rag/memory.py (LanceDB)
-                 document-corpus chunks          past (query, answer) pairs
-                        │  search()                    │  recall() / remember()
-                        ▼                               ▼
-question ──► rag/embedder.py ──► POST /query (app.py) ──► rag/provider_pool.py
-             (embed once,        1. embed the question       (local litellm-proxy,
-              reused for both    2. retrieve top-k chunks      Groq fallback)
-              store + memory)    3. recall relevant memory          │
-                                 4. build a strictly-grounded        ▼
-                                    prompt from the chunks    synthesized, cited answer
-                                 5. call the LLM
-                                 6. remember (question, answer)
-```
-
-**`POST /query`** — `{"question": "...", "top_k": 5, "memory_top_k": 3}` (both
-optional). Retrieves the `top_k` most similar document-corpus chunks, recalls up to
-`memory_top_k` semantically similar past interactions from the memory layer (surfaced
-in the response for observability; deliberately *not* injected into the LLM prompt, so
-a prior answer can never masquerade as a "fact present in the retrieved passages"),
-asks the LLM to synthesize an answer, then remembers the new (question, answer) pair.
-Returns `{question, answer, backend, model, sources: [...], memory: {...}}` — every
-`sources[]` entry carries the real `source` id (e.g. `gutenberg:1661`), title, passage
-index, similarity, and the actual retrieved text, so an answer's grounding can always
-be checked by a human, not just trusted.
-
-**Grounding is enforced at the prompt level**: the system prompt explicitly restricts
-the model to facts stated in the numbered SOURCE PASSAGES, requires a `[n]` citation
-after every factual claim, and forbids outside/background knowledge or invented facts
-— see `_SYSTEM_PROMPT` in `app.py`. If no relevant chunks are retrieved at all, the
-service returns a fixed "I don't have any retrieved passages relevant to this
-question" answer *without ever calling the LLM* (nothing to hallucinate from).
-
-**`GET /health`** — corpus chunk count, memory-interaction count, and which LLM
-backends are currently configured (`{"local-litellm": true, "groq": false}` etc.).
-
-### Real acceptance-criterion runs (verified by reading, not by response-code)
-
-Ran the service — once directly with `.venv/bin/python app.py`, once inside a built
-`docker build -t distributed-rag .` container with `./data` volume-mounted — against the
-real 2167-chunk corpus (Gutendex + Open Library + Internet Archive) and a real
-`local-devstral-small2` backend. Three real questions, read in full against their real
-retrieved chunks, not just checked for a 200:
-
-1. *"How does Sherlock Holmes deduce facts about a client from small physical
-   details, according to Watson?"* (Gutendex path) → answer: *"...Holmes quickly noted
-   that Mr. Jabez Wilson had done manual labor, took snuff, was a Freemason, had been
-   in China, and had done a considerable amount of writing lately... [3]"* — `[3]` is
-   `gutenberg:1661` passage 87: *"Beyond the obvious facts that he has at some time
-   done manual labour, that he takes snuff, that he is a Freemason, that he has been
-   in China, and that he has done a considerable amount of writing lately, I can
-   deduce nothing else."* Every clause in the answer is a direct paraphrase of that
-   one cited passage — genuinely grounded.
-2. *"What is the opening line of Pride and Prejudice, and what does Mr. Darcy think
-   of Elizabeth Bennet when they first meet at the ball?"* (Open Library path) →
-   answer quotes the opening line verbatim, cited `[1]` = `openlibrary:OL66554W`
-   passage 1, which literally contains that exact sentence — **and** the model
-   correctly refused the second half ("the passages do not explicitly state his
-   thoughts when they first meet... I cannot provide an answer to that part of the
-   question based on the given passages") because none of the retrieved chunks
-   covered that scene, even though it's a famous, easily-guessable line from the real
-   book. This is the grounding constraint actually doing its job, not just the happy
-   path.
-3. *"What does Open Library say Pride and Prejudice is about, and who are its main
-   characters?"* (Open Library path, run inside the Docker container) → every clause
-   of the answer (1813, novel of manners, Jane Austen, Elizabeth Bennet as dynamic
-   protagonist, the entail forcing the Bennet daughters to marry well) is a direct
-   match against the single cited passage `[1]` = `openlibrary:OL66554W` passage 0,
-   word for word.
-
-`GET /health` after these runs: `{"corpus_chunks": 2167, "memory_interactions": 3, ...}`
-— confirming `remember()` fired on every call, and a later call's `memory.recalled[]`
-genuinely returned the earlier (question, answer) pairs by real cosine similarity
-(0.71 for a genuinely related follow-up, 0.45 for an unrelated one).
-
-Reproduce it yourself:
-
-```bash
-# Directly:
-.venv/bin/python app.py            # binds 0.0.0.0:8080 by default (RAG_PORT to override)
+cp .env.example .env   # fill in LITELLM_* (or GROQ_API_KEY) — see Configuration below
+.venv/bin/python scripts/ingest.py gutenberg 1661             # fetch + embed + store one real book
+.venv/bin/python app.py                                        # binds 0.0.0.0:8080 (RAG_PORT to override)
 curl -s localhost:8080/query -H 'content-type: application/json' \
   -d '{"question": "your question about ingested content"}'
+```
 
-# As a container (persists the corpus + memory + model cache under ./data):
+As a container:
+
+```bash
 docker build -t distributed-rag .
 docker run -p 8080:8080 -v "$PWD/data:/app/data" --env-file .env distributed-rag
 # or:
 docker compose up --build
+docker compose exec rag python scripts/ingest.py gutenberg 1661
 ```
 
-## What's explicitly NOT built yet
+## Endpoints (verified live, 2026-09-01)
 
-This proves the hardest, most load-bearing pieces (local embeddings + three real free
-connectors + genuine, cross-connector, LLM-synthesized *and cited* retrieval) as one
-real containerized HTTP service. Everything below is real, scoped, remaining work —
-do not mistake this repo for a finished, packaged demo:
+The container currently runs on this host as `cads-demo-distributed-rag-rag-1`, mapped
+to `127.0.0.1:8081` (not 8080 — that host port is already taken by an unrelated
+pre-existing container, `cadserv-cadvisor`, on `cads-lambda`; see the comment in
+`docker-compose.yml`). Inside the container it's still `RAG_PORT=8080`.
 
-- **The Groq fallback path is unverified with a real key** — see above.
-- **No marketplace manifest packaging.** Not yet signed, not yet installable/
-  uninstallable via ct-agent's installer-engine, no `dev_sign`/`activate()`/verify-output
-  cycle run against it. The issue's acceptance criterion's *second* half — install
-  *and* uninstall via the real installer-engine pipeline with real verify output — is
-  unmet; the first half (a real question returns a real, demonstrably grounded answer)
-  is now met, see above.
-- **No Rust port.** This bootstrap is Python (`fastembed`, FastAPI). If the final
-  packaged manifest needs a single Rust binary (matching `harness-memory`'s
-  convention), that's a rewrite, not a wrapper, and hasn't been started.
-- **No auth on `/query`.** Fine for a same-host demo container; would need at least a
-  bearer token before being reachable from outside a private network.
-- **Partial test coverage.** `rag/memory.py` and `rag/provider_pool.py` have real
-  unit tests (`tests/test_memory.py`, `tests/test_provider_pool.py`); the document
-  corpus path (`rag/store.py`, `rag/gutendex.py`, `rag/embedder.py`) and `app.py`
-  itself still don't — only manually verified via `scripts/ingest.py`/`scripts/query.py`
-  and the real `/query` runs above.
+- `GET /` — serves `static/index.html`, a single-page frontend (ask a question, see the
+  answer with its cited sources and any recalled memory) with a DE/EN language toggle
+  and the portfolio's standard dark-first styling and funding footer.
+- `GET /health` — curled live just now: `{"status":"ok","corpus_chunks":2167,
+  "memory_interactions":26,"llm_backends":{"local-litellm":true,"groq":false}}`.
+  `memory_interactions` grows by one on every `/query` call; the number above is a
+  snapshot, not a fixed fact.
+- `POST /query` — body `{"question": "...", "top_k": 5, "memory_top_k": 3}` (`top_k`
+  and `memory_top_k` optional). Curled live just now with a real question:
+
+  ```json
+  {
+    "question": "What does Open Library say Pride and Prejudice is about?",
+    "answer": "According to Open Library, *Pride and Prejudice* is an 1813 novel of manners written by Jane Austen that follows the character development of Elizabeth Bennet, the dynamic protagonist of the book who learns about the repercussions of hasty judgments and comes to appreciate the difference between superficial goodness and actual goodness [1].",
+    "backend": "local-litellm",
+    "model": "bunsenbrenner-default",
+    "sources": [ { "citation": 1, "source": "openlibrary:OL66554W", "title": "Pride and Prejudice", "passage_index": 0, "similarity": 0.760, "text": "..." } ],
+    "memory": { "recalled": [], "remembered_id": 26 }
+  }
+  ```
+
+  Every `sources[]` entry carries the real `source` id, title, passage index,
+  similarity, and the retrieved text itself, so an answer's grounding can be checked
+  directly rather than trusted. If no relevant chunks are retrieved, the service returns
+  a fixed "I don't have any retrieved passages relevant to this question" answer
+  *without calling the LLM at all*. Returns `400` on a blank question and `503` if the
+  corpus is empty.
+
+## The corpus (verified live, 2026-09-01)
+
+Queried the running container's SQLite store directly (`docker exec ... sqlite3`
+against the `chunks` table, not just trusting `/health`'s count):
+
+| source | title | chunks |
+|---|---|---|
+| `gutenberg:1661` | The Adventures of Sherlock Holmes | 962 |
+| `archive:prideandprejudic42671gut` | Pride and Prejudice (Internet Archive full text) | 1202 |
+| `openlibrary:OL66554W` | Pride and Prejudice (Open Library descriptive text) | 3 |
+| **total** | | **2167** |
+
+All three connectors are represented in the live corpus — this was previously a gap
+(only Sherlock Holmes was ingested at one point) and is now fixed. Ingest another book
+with `scripts/ingest.py <gutenberg|openlibrary|archive> <id>` (or the equivalent
+`docker compose exec rag ...` form).
+
+## Configuration
+
+Copy `.env.example` to `.env` (gitignored) and fill in real values. Read by
+`rag/provider_pool.py`:
+
+| var | purpose |
+|---|---|
+| `LITELLM_BASE_URL` / `LITELLM_API_KEY` / `LITELLM_DEFAULT_MODEL` | the team's local litellm-proxy — primary LLM path |
+| `GROQ_API_KEY` (+ optional `GROQ_MODEL`, `GROQ_BASE_URL`) | free external fallback, only used on a local rate-limit/connection failure; leave unset to disable fallback entirely |
+
+The instance running live on this host points `LITELLM_BASE_URL` at
+`https://llm-34a13a96.bunsenbrenner.org/v1` with `LITELLM_DEFAULT_MODEL=bunsenbrenner-default`
+— the portfolio-wide shared model alias (confirmed above: the live `/query` response
+reports `"model": "bunsenbrenner-default"`). `GROQ_API_KEY` is unset on this instance
+(`/health` reports `"groq": false`). `.env.example` itself still ships an older
+placeholder model name as an illustrative default — it is not the value actually in use.
+
+Other env vars, all optional with sensible defaults (see `app.py`'s module docstring):
+`RAG_HOST`, `RAG_PORT`, `RAG_DB_PATH`, `RAG_MEMORY_PATH`, `RAG_FASTEMBED_CACHE_DIR`,
+`RAG_TOP_K` (default 5), `RAG_MEMORY_TOP_K` (default 3).
+
+## Dependencies
+
+- **Embedding**: `BAAI/bge-small-en-v1.5` (33M params, 384-dim, MIT-licensed — checked
+  directly on the model card, not secondhand) via [`fastembed`](https://github.com/qdrant/fastembed)
+  (Apache-2.0, ONNX/CPU, no PyTorch). Runs locally; only the one-time model download
+  needs network access.
+- **Document connectors**: [Gutendex](https://gutendex.com)/gutenberg.org, [Open
+  Library](https://openlibrary.org/developers/api), [Internet
+  Archive](https://archive.org/developers/) — all free, public, key-less. The Internet
+  Archive connector explicitly refuses any `access-restricted-item` rather than
+  assuming its lending terms are safe to reuse.
+- **Document store**: local SQLite (`rag/store.py`) — BLOB vector column, brute-force
+  cosine search, no vector-DB dependency (demo-scale, not web-scale).
+- **Interaction memory**: [LanceDB](https://pypi.org/project/lancedb/) embedded mode
+  (Apache-2.0, no server process) — `rag/memory.py`, distinct from the document corpus.
+- **LLM**: the shared portfolio litellm-proxy (`bunsenbrenner-default` alias, see
+  Configuration above), with an opt-in Groq fallback that is **not yet verified with a
+  real completion** — see Known limitations.
+- Python 3.12, FastAPI + uvicorn (`requirements.txt`).
+
+## Reachability
+
+Directly over HTTP from this host: `127.0.0.1:8081` (see Endpoints above). There is no
+public `*.bunsenbrenner.org` subdomain for this service — no DNS/tunnel currently
+resolves for it.
+
+It is additionally exposed as a `text_generation` service over an Agent-Fabric ct-agent
+channel to a specific peer session, via a channel identity, handler script, and
+pidfile-watchdog kept at `/home/becke/rag-channel-identity/` on the host — **outside
+this git repo**, not tracked here. That handler shells out to this service's own
+`/query` HTTP endpoint (currently pointed at `127.0.0.1:8081`), so it adds no separate
+capability, only a different transport. Confirmed alive on this host as of this check
+(accept process running, listening for channel admissions).
+
+## Tests
+
+`tests/test_memory.py` (3 tests, real embedder + real embedded LanceDB, nothing mocked)
+and `tests/test_provider_pool.py` (10 tests, mocked HTTP — routing/fallback logic only).
+Ran live: 13 passed, 2026-09-01. The document-corpus path (`rag/store.py`,
+`rag/gutendex.py`, `rag/embedder.py`) and `app.py` itself have no automated tests yet —
+only manual verification via the scripts and the live `/query` runs above.
+
+## What's not built yet
+
+- **The Groq fallback path is unverified with a real key.** The routing logic is unit
+  tested and the endpoint shape was live-confirmed (a placeholder key got a real `401`
+  from Groq, proving the URL/request format), but no actual successful Groq completion
+  has been observed — getting a real free key needs an interactive signup step.
+- **No marketplace manifest packaging.** Not signed, not installable/uninstallable via
+  ct-agent's installer-engine, no `dev_sign`/`activate()`/verify-output cycle run.
+- **No Rust port.** This is Python end to end (`fastembed`, FastAPI). If a packaged
+  manifest eventually needs a single Rust binary (matching the marketplace's
+  `harness-memory` convention), that's a rewrite, not a wrapper.
+- **No auth on `/query`.** Fine for a same-host/loopback demo; would need at least a
+  bearer token before being reachable from outside a private network. The Agent-Fabric
+  channel handler (see Reachability) also does not add its own auth layer beyond the
+  channel's own admission handshake.
+- **Partial test coverage** — see Tests above.
 - **No production-quality error handling, retries, or rate-limit handling** for the
   Gutendex/gutenberg.org calls.
+- **No LICENSE file** in this repo — to be decided by operator/project convention, not
+  silently defaulted. The embedding model (MIT) and the ingested text (Project
+  Gutenberg / Open Library CC0 / an Internet Archive Gutenberg mirror, all public
+  domain) are independently license-clean regardless of this repo's own license.
 
 ## Repo layout
 
 ```
 rag/
   embedder.py         — local BGE-small embedding wrapper (fastembed)
-  gutendex.py         — Gutendex connector: fetch, boilerplate-strip, chunk (chunk_text
-                         is shared by all three document connectors below)
-  openlibrary.py      — Open Library connector: search + fetch descriptive/bibliographic text
-  internetarchive.py  — Internet Archive connector: search + fetch full text (non-restricted items only)
+  gutendex.py         — Gutendex connector (fetch, boilerplate-strip, chunk_text — shared by all three connectors)
+  openlibrary.py      — Open Library connector
+  internetarchive.py  — Internet Archive connector
   store.py            — SQLite BLOB-vector store + brute-force cosine search (document corpus)
-  memory.py           — LanceDB interaction/fact memory: remember()/recall() (distinct from the corpus)
-  provider_pool.py    — local litellm-proxy -> Groq free-fallback LLM router
+  memory.py           — LanceDB interaction memory: remember()/recall()
+  provider_pool.py    — local litellm-proxy → Groq free-fallback LLM router
 scripts/
   ingest.py                 — CLI: fetch from gutenberg/openlibrary/archive by id, embed, store
   query.py                  — CLI: embed a query, retrieve top-k passages
   verify_provider_pool.py   — CLI: live-check whichever LLM backends are configured
 tests/
-  test_memory.py           — memory-layer unit tests (real embedder + real LanceDB, no mocking)
-  test_provider_pool.py    — routing-logic unit tests (mocked, no network)
-app.py             — FastAPI /query + /health HTTP service, wires all of the above together
-Dockerfile         — packages app.py as a single container (python:3.12-slim)
-docker-compose.yml — runs it as one Compose service, ./data volume-mounted for persistence
-requirements.txt
-.env.example   — LITELLM_*/GROQ_* config template for provider_pool.py
+  test_memory.py, test_provider_pool.py
+static/index.html   — single-page frontend (DE/EN, dark-first)
+app.py               — FastAPI /query + /health service, wires everything above together
+Dockerfile, docker-compose.yml, requirements.txt, .env.example
 ```
-
-## License
-
-Code in this repo: to be decided by the operator/project convention (no LICENSE file
-yet — flagging this as an open item, not silently defaulting to one).
-
-The embedding model (`BAAI/bge-small-en-v1.5`) is MIT-licensed — see above. Gutendex-
-sourced book text is public domain in the U.S. (Project Gutenberg's own terms).
-Open Library's catalog data is released under a CC0 public-domain dedication (see
-[openlibrary.org/developers/api](https://openlibrary.org/developers/api)). The
-Internet Archive item used here (`prideandprejudic42671gut`) is itself a Project
-Gutenberg mirror, same public-domain terms as above; the connector deliberately
-refuses any `access-restricted-item` (lending-library) item rather than assuming its
-terms.

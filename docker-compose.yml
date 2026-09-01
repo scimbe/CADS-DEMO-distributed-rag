@@ -8,8 +8,11 @@
 # Bring up:   docker compose up --build
 # Ingest a book into the running container's corpus, e.g.:
 #   docker compose exec rag python scripts/ingest.py gutenberg 1661
-# Query:      curl -s localhost:8080/query -H 'content-type: application/json' \
+# Query:      curl -s localhost:8081/query -H 'content-type: application/json' \
 #               -d '{"question": "..."}'
+#
+# Host port 8081 (not the container's own 8080): on cads-lambda, 127.0.0.1:8080 is already
+# bound by an unrelated pre-existing container (cadserv-cadvisor) -- found live, not assumed.
 
 volumes:
   distributed-rag-data:
@@ -19,7 +22,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8080"
     volumes:
       - distributed-rag-data:/app/data
     environment:
