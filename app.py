@@ -57,6 +57,7 @@ from rag.embedder import Embedder
 from rag.memory import Interaction, MemoryStore
 from rag.provider_pool import ChatResult, ProviderPoolError, chat, configured_backends
 from rag.store import SearchResult, Store
+from rag.verification import ClaimVerification, verify_answer
 
 REPO_ROOT = Path(__file__).resolve().parent
 STATIC_DIR = REPO_ROOT / "static"
@@ -95,6 +96,12 @@ class SourceOut(BaseModel):
     passage_index: int
     similarity: float
     text: str
+    # Grounding-verification rollup (marketplace#40) for every claim in `answer`
+    # that cited this passage: None when no claim cited it, otherwise the worst
+    # case across those claims (any not-fully-supported claim makes this False;
+    # confidence is the lowest confidence among them). See rag/verification.py.
+    verified: Optional[bool] = None
+    confidence: Optional[float] = None
 
 
 class RecalledOut(BaseModel):
@@ -108,6 +115,22 @@ class MemoryOut(BaseModel):
     remembered_id: Optional[int] = None
 
 
+class ClaimVerificationOut(BaseModel):
+    text: str
+    citations: list[int]
+    verdict: str  # "supported" | "partially_supported" | "not_supported" | "uncited"
+    confidence: Optional[float] = None
+    method: str  # "lexical" | "llm" | "lexical_fallback" | "uncited"
+
+
+class VerificationOut(BaseModel):
+    claims: list[ClaimVerificationOut]
+    # True iff every CITED claim verdict is "supported" (vacuously True if there
+    # are no cited claims at all). Uncited sentences don't count against this --
+    # see rag/verification.py's module docstring for why that's out of scope here.
+    all_supported: bool
+
+
 class QueryResponse(BaseModel):
     question: str
     answer: str
@@ -115,6 +138,7 @@ class QueryResponse(BaseModel):
     model: str
     sources: list[SourceOut]
     memory: MemoryOut
+    verification: VerificationOut
 
 
 class HealthResponse(BaseModel):
@@ -235,12 +259,35 @@ def query(req: QueryRequest) -> QueryResponse:
     recalled = recall_future.result() if recall_future is not None else []
     remembered_id = _memory.remember(Interaction(query=question, answer=answer, created_at=int(time.time())))
 
-    return QueryResponse(
-        question=question,
-        answer=answer,
-        backend=backend,
-        model=model,
-        sources=[
+    # Programmatic grounding verification (marketplace#40): independently check
+    # each cited claim in `answer` against the passage(s) it cites -- see
+    # rag/verification.py for the technique and why it's a separate mechanism
+    # from the answer-generation call above.
+    passages_by_citation = {i: r.text for i, r in enumerate(results, start=1)}
+    claim_verifications: list[ClaimVerification] = verify_answer(answer, passages_by_citation)
+    verification = VerificationOut(
+        claims=[
+            ClaimVerificationOut(
+                text=cv.text, citations=cv.citations, verdict=cv.verdict, confidence=cv.confidence, method=cv.method
+            )
+            for cv in claim_verifications
+        ],
+        all_supported=all(cv.verdict == "supported" for cv in claim_verifications if cv.verdict != "uncited"),
+    )
+
+    def _source_rollup(citation: int) -> tuple[Optional[bool], Optional[float]]:
+        citing = [cv for cv in claim_verifications if citation in cv.citations]
+        if not citing:
+            return None, None
+        return (
+            all(cv.verdict == "supported" for cv in citing),
+            min(cv.confidence for cv in citing if cv.confidence is not None),
+        )
+
+    sources = []
+    for i, r in enumerate(results, start=1):
+        verified, confidence = _source_rollup(i)
+        sources.append(
             SourceOut(
                 citation=i,
                 source=r.source,
@@ -248,13 +295,22 @@ def query(req: QueryRequest) -> QueryResponse:
                 passage_index=r.passage_index,
                 similarity=r.similarity,
                 text=r.text,
+                verified=verified,
+                confidence=confidence,
             )
-            for i, r in enumerate(results, start=1)
-        ],
+        )
+
+    return QueryResponse(
+        question=question,
+        answer=answer,
+        backend=backend,
+        model=model,
+        sources=sources,
         memory=MemoryOut(
             recalled=[RecalledOut(query=r.query, answer=r.answer, similarity=r.similarity) for r in recalled],
             remembered_id=remembered_id,
         ),
+        verification=verification,
     )
 
 
